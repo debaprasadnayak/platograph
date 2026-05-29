@@ -13,6 +13,20 @@ def _load_graph(graph_json: Path):
     return DataGraph.load(graph_json)
 
 
+def _node_to_dict(node) -> dict:
+    """Serialize a Node dataclass to a JSON-safe dict."""
+    return {
+        "id": node.id,
+        "name": node.name,
+        "type": node.type.value,
+        "layer": node.layer.value,
+        "file_path": node.file_path,
+        "description": node.description,
+        "tags": node.tags,
+        "metadata": node.metadata,
+    }
+
+
 def _tool_result(content: Any) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(content, indent=2)}]}
 
@@ -134,13 +148,13 @@ def serve(graph_json: Path) -> None:
             from datagraph.rag.retriever import retrieve
             from datagraph.rag.synthesizer import synthesize
             question = arguments["question"]
-            nodes = retrieve(graph, question, top_k=10)
-            answer = synthesize(question, [n.__dict__ for n in nodes])
+            nodes = retrieve(graph, question, top_k=10)  # already list[dict]
+            answer = synthesize(question, nodes)
             result = {"answer": answer}
 
         elif name == "get_node":
             node = graph.find_node(arguments["node_id"])
-            result = node.__dict__ if node else {"error": "node not found"}
+            result = _node_to_dict(node) if node else {"error": "node not found"}
 
         elif name == "get_neighbors":
             nid = arguments["node_id"]
@@ -148,24 +162,30 @@ def serve(graph_json: Path) -> None:
             depth = int(arguments.get("depth", 1))
             up = graph.upstream(nid, depth) if direction in ("upstream", "both") else []
             dn = graph.downstream(nid, depth) if direction in ("downstream", "both") else []
-            all_ids = list(set(up + dn))
-            result = {"neighbors": [graph._nodes[i].__dict__ for i in all_ids if i in graph._nodes]}
+            seen: dict[str, Any] = {}
+            for n in up + dn:
+                seen[n.id] = _node_to_dict(n)
+            result = {"neighbors": list(seen.values())}
 
         elif name == "shortest_path":
-            path = graph.shortest_path(arguments["source"], arguments["target"])
-            result = {"path": path}
+            path_nodes = graph.shortest_path(arguments["source"], arguments["target"])
+            result = {"path": [_node_to_dict(n) for n in path_nodes]}
 
         elif name == "impact_analysis":
-            affected = graph.impact_analysis(arguments["node_id"])
-            result = {"affected_nodes": affected}
+            raw = graph.impact_analysis(arguments["node_id"])
+            result = {
+                "node": _node_to_dict(raw["node"]) if raw.get("node") else None,
+                "directly_affected": [_node_to_dict(n) for n in raw.get("directly_affected", [])],
+                "transitively_affected": [_node_to_dict(n) for n in raw.get("transitively_affected", [])],
+            }
 
         elif name == "schedule_for":
             info = graph.schedule_for(arguments["asset_name"])
-            result = info or {"message": "no schedule found"}
+            result = {"schedule": [_node_to_dict(n) for n in info]} if info else {"message": "no schedule found"}
 
         elif name == "execution_order":
             stages = graph.execution_order(arguments["job_name"])
-            result = {"stages": stages}
+            result = {"stages": [[_node_to_dict(n) for n in stage] for stage in stages]}
 
         elif name == "list_prs":
             from datagraph.analysis.pr_triage import list_open_prs
