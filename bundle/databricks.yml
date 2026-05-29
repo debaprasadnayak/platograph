@@ -1,0 +1,55 @@
+bundle:
+  name: platograph
+
+variables:
+  project_path:
+    description: "Root path of the data project to scan"
+    default: "/Workspace/Repos/platograph"
+  output_path:
+    description: "Output directory for graph artefacts"
+    default: "/Volumes/main/default/platograph_out"
+
+resources:
+  jobs:
+    platograph_scan_job:
+      name: "Platograph — Scan & Refresh Graph"
+      description: "Runs platograph scan to refresh the data-platform knowledge graph."
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: "UTC"
+        pause_status: UNPAUSED
+
+      tasks:
+        - task_key: scan
+          notebook_task:
+            notebook_path: /Workspace/Repos/platograph/bundle/notebooks/scan_runner
+            base_parameters:
+              project_path: "${var.project_path}"
+              output_path: "${var.output_path}"
+          job_cluster_key: platograph_cluster
+          libraries:
+            - pypi:
+                package: "platograph"
+
+      job_clusters:
+        - job_cluster_key: platograph_cluster
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "Standard_DS3_v2"
+            num_workers: 1
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+
+      email_notifications:
+        on_failure:
+          - "{{var.notification_email}}"
+
+targets:
+  dev:
+    mode: development
+    default: true
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /prod/platograph

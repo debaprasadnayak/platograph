@@ -30,6 +30,9 @@ jobs:
       - name: Lint (ruff)
         run: ruff check datagraph tests
 
+      - name: Format check (ruff)
+        run: ruff format --check datagraph tests
+
       - name: Type check (mypy)
         run: mypy datagraph --ignore-missing-imports
 
