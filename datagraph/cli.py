@@ -73,23 +73,56 @@ def scan(
     from datagraph.extractors.base import get_all_extractors
     extractors = get_all_extractors()
 
-    ignore_patterns = set(cfg.ignore_paths or [])
+    # Default ignore dirs
+    _DEFAULT_IGNORE = {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", "target", "dist", "build"}
+    ignore_patterns = _DEFAULT_IGNORE | set(cfg.ignore_paths or [])
+
+    def _is_ignored(p: Path) -> bool:
+        return any(part in ignore_patterns for part in p.parts)
+
+    # Partition: directory-level vs file-level extractors
+    dir_extractors = [e for e in extractors if not e.supported_extensions]
+    file_extractors = [e for e in extractors if e.supported_extensions]
+
+    # Build extension → extractor mapping
+    from collections import defaultdict
+    ext_map: dict[str, list] = defaultdict(list)
+    for ext in file_extractors:
+        for suffix in ext.supported_extensions:
+            ext_map[suffix].append(ext)
+
+    def _add_to_graph(nodes, edges):
+        for n in nodes:
+            graph.add_node(n)
+        for e in edges:
+            graph.add_edge(e)
 
     _print(f"  Running {len(extractors)} extractors …")
-    for extractor_cls in extractors:
-        extractor = extractor_cls(config=cfg, sql_dialect=dialect)
-        try:
-            extractor.safe_extract(root, graph)
-        except Exception as exc:
-            _print(f"  [yellow]Warning:[/yellow] {extractor_cls.__name__} failed: {exc}")
+
+    # Run directory-level extractors once on project root
+    for extractor in dir_extractors:
+        nodes, edges = extractor.safe_extract(root, root)
+        _add_to_graph(nodes, edges)
+
+    # Walk the tree and dispatch file-level extractors
+    try:
+        all_files = [p for p in root.rglob("*") if p.is_file() and not _is_ignored(p)]
+    except Exception:
+        all_files = []
+
+    for file_path in all_files:
+        suffix = file_path.suffix.lower()
+        for extractor in ext_map.get(suffix, []):
+            nodes, edges = extractor.safe_extract(file_path, root)
+            _add_to_graph(nodes, edges)
 
     # Cross-reference resolution
     graph.resolve_cross_references()
 
     # Community detection
     try:
-        from datagraph.analysis.clustering import detect_communities
-        detect_communities(graph)
+        from datagraph.analysis.clustering import cluster
+        cluster(graph)
         _print(f"  Clustering done.")
     except Exception as exc:
         _print(f"  [yellow]Clustering skipped:[/yellow] {exc}")

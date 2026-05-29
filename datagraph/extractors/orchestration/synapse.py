@@ -31,6 +31,9 @@ class SynapseExtractor(AdfExtractor):
         except Exception:
             return [], []
 
+        if not isinstance(raw, dict):
+            return [], []
+
         # Check it's a Synapse pipeline
         is_synapse = (
             "Microsoft.Synapse/workspaces/pipelines" in raw.get("type", "")

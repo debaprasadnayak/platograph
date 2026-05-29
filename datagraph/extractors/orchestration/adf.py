@@ -25,6 +25,9 @@ class AdfExtractor(BaseExtractor):
         except Exception:
             return nodes, edges
 
+        if not isinstance(raw, dict):
+            return nodes, edges
+
         props = raw.get("properties", {})
         if "activities" not in props:
             return nodes, edges

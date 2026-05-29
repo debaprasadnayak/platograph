@@ -22,6 +22,9 @@ class FabricDeploymentPipelineExtractor(BaseExtractor):
         except Exception:
             return nodes, edges
 
+        if not isinstance(raw, dict):
+            return nodes, edges
+
         # Detect Fabric deployment pipeline JSON
         if "stages" not in raw and raw.get("type") != "DeploymentPipeline":
             return nodes, edges

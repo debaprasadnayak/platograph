@@ -51,7 +51,9 @@ class DatabricksJobsExtractor(BaseExtractor):
             return nodes, edges
 
         jobs = raw.get("resources", {}).get("jobs", {})
-        if not jobs:
+        pipelines = raw.get("resources", {}).get("pipelines", {})
+
+        if not jobs and not pipelines:
             return nodes, edges
 
         rel = self.relative_path(path, project_root)
@@ -59,6 +61,26 @@ class DatabricksJobsExtractor(BaseExtractor):
             if not isinstance(job_def, dict):
                 continue
             self._parse_job(job_key, job_def, rel, nodes, edges)
+
+        for pipe_key, pipe_def in pipelines.items():
+            if not isinstance(pipe_def, dict):
+                continue
+            pipe_name = pipe_def.get("name", pipe_key)
+            pipe_id = self.make_node_id("lakeflow_pipeline", pipe_name)
+            nodes.append(
+                Node(
+                    id=pipe_id,
+                    name=pipe_name,
+                    type=NodeType.LAKEFLOW_PIPELINE,
+                    layer=DataLayer.ORCHESTRATION,
+                    file_path=rel,
+                    metadata={
+                        "catalog": pipe_def.get("catalog"),
+                        "target": pipe_def.get("target"),
+                        "source_file": rel,
+                    },
+                )
+            )
 
         return nodes, edges
 
