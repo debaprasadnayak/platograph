@@ -37,6 +37,8 @@ _SUPPORTED_EXTENSIONS = [
     ".epub",
     # Web
     ".html", ".htm",
+    # Data (markitdown renders as markdown tables / code blocks)
+    ".json", ".csv",
     # Images
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp",
 ]
