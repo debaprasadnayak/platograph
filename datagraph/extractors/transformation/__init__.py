@@ -7,4 +7,5 @@ from datagraph.extractors.transformation import (  # noqa: F401
     lakeflow,
     python_script,
     markdown,
+    rich_docs,
 )

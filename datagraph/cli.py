@@ -136,6 +136,16 @@ def scan(
     # Cross-reference resolution
     graph.resolve_cross_references()
 
+    # LLM document enrichment (Pass 3 — costs tokens, opt-in via --enrich-llm)
+    if enrich_llm:
+        try:
+            from datagraph.enrichment.doc_enrichment import enrich_docs_with_llm
+            _print("  Running LLM document enrichment …")
+            n_enriched = enrich_docs_with_llm(graph)
+            _print(f"  [green]✓[/green] Doc enrichment: {n_enriched} document(s) enriched")
+        except Exception as exc:
+            _print(f"  [yellow]Doc enrichment skipped:[/yellow] {exc}")
+
     # Community detection
     try:
         from datagraph.analysis.clustering import cluster

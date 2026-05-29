@@ -42,6 +42,12 @@ rag-databricks = ["databricks-sdk>=0.20"]
 rag-azure = ["openai>=1.30"]
 openai = ["openai>=1.30"]
 app = ["fastapi>=0.111", "uvicorn>=0.30"]
+docs = [
+    # MarkItDown converts PDF, DOCX, PPTX, XLSX, images, HTML → Markdown.
+    # Install with: pip install 'markitdown[pdf,docx,pptx,xlsx]'
+    # or for everything: pip install 'markitdown[all]'
+    "markitdown[pdf,docx,pptx,xlsx]>=0.1.0",
+]
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
@@ -60,6 +66,7 @@ all = [
     "mcp>=1.0",
     "fastapi>=0.111",
     "uvicorn>=0.30",
+    "markitdown[pdf,docx,pptx,xlsx]>=0.1.0",
 ]
 
 [project.scripts]
