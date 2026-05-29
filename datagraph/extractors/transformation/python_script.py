@@ -27,8 +27,15 @@ class PythonScriptExtractor(BaseExtractor):
 
         text = path.read_text(errors="replace")
 
-        # Skip Airflow DAGs and DLT pipelines (handled by dedicated extractors)
-        if "from airflow" in text or "import dlt" in text or "from dlt" in text:
+        # Skip Airflow DAGs and DLT/pyspark.pipelines scripts (handled by dedicated extractors)
+        if (
+            "from airflow" in text
+            or "import dlt" in text
+            or "from dlt" in text
+            or "from pyspark import pipelines" in text
+            or "import pyspark.pipelines" in text
+            or "from pyspark.pipelines" in text
+        ):
             return nodes, edges
 
         # Skip Databricks notebook source files (handled by NotebookExtractor)

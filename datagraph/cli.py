@@ -99,10 +99,20 @@ def scan(
 
     _print(f"  Running {len(extractors)} extractors …")
 
+    # Collect all nodes and edges before adding to graph (two-pass approach)
+    # so cross-file edges (e.g. pipeline YAML → dataset from .py) are not
+    # silently dropped because the target node doesn't exist yet.
+    all_nodes_batch: list = []
+    all_edges_batch: list = []
+
+    def _collect(nodes, edges):
+        all_nodes_batch.extend(nodes)
+        all_edges_batch.extend(edges)
+
     # Run directory-level extractors once on project root
     for extractor in dir_extractors:
         nodes, edges = extractor.safe_extract(root, root)
-        _add_to_graph(nodes, edges)
+        _collect(nodes, edges)
 
     # Walk the tree and dispatch file-level extractors
     try:
@@ -114,7 +124,14 @@ def scan(
         suffix = file_path.suffix.lower()
         for extractor in ext_map.get(suffix, []):
             nodes, edges = extractor.safe_extract(file_path, root)
-            _add_to_graph(nodes, edges)
+            _collect(nodes, edges)
+
+    # First pass: add all nodes so edges never reference missing endpoints
+    for n in all_nodes_batch:
+        graph.add_node(n)
+    # Second pass: add all edges
+    for e in all_edges_batch:
+        graph.add_edge(e)
 
     # Cross-reference resolution
     graph.resolve_cross_references()

@@ -193,6 +193,18 @@ class DataGraph:
                     if lid:
                         self.add_edge(Edge(node.id, lid, EdgeType.READS_FROM, "INFERRED"))
 
+        # CONTAINS: link LAKEFLOW_PIPELINE nodes to LAKEFLOW_DATASET nodes
+        # by matching the pipeline name in the dataset's file path segments.
+        # This handles pyspark.pipelines scripts whose datasets are discovered
+        # independently from the pipeline YAML.
+        for pipeline_node in [n for n in self._nodes.values() if n.type == NodeType.LAKEFLOW_PIPELINE]:
+            pipe_name_lower = pipeline_node.name.lower()
+            for ds_node in [n for n in self._nodes.values() if n.type == NodeType.LAKEFLOW_DATASET]:
+                if ds_node.file_path:
+                    path_parts = [p.lower() for p in Path(ds_node.file_path).parts]
+                    if pipe_name_lower in path_parts:
+                        self.add_edge(Edge(pipeline_node.id, ds_node.id, EdgeType.CONTAINS, "INFERRED"))
+
         # SCHEDULED_BY: for TABLE nodes written by tasks trace back to job/DAG
         self._resolve_scheduled_by()
 
