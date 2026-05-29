@@ -170,7 +170,7 @@ def query(question: str, graph_json: str) -> None:
 
     g = DataGraph.load(Path(graph_json))
     nodes = retrieve(g, question, top_k=12)
-    answer = synthesize(question, [vars(n) for n in nodes])
+    answer = synthesize(question, nodes)
     click.echo(answer)
 
 
