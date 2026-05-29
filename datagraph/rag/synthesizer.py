@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
+
+from datagraph.llm_backend import call_llm, detect_backend
 
 
 SYSTEM_PROMPT = """You are a data platform expert assistant. You have access to a knowledge graph
@@ -32,81 +33,17 @@ def synthesize(
         {"role": "user", "content": f"Graph context:\n{context}\n\nQuestion: {question}"},
     ]
 
-    backend = _detect_backend(backend)
+    backend = detect_backend(backend)
 
-    if backend == "anthropic":
-        return _call_anthropic(messages)
-    if backend in ("openai", "azure_openai"):
-        return _call_openai(messages, backend == "azure_openai")
-    if backend == "databricks":
-        return _call_databricks(messages)
+    if backend == "none":
+        return _fallback_summary(question, retrieved_nodes)
 
-    # No LLM available — return structured summary
-    return _fallback_summary(question, retrieved_nodes)
-
-
-def _detect_backend(backend: str) -> str:
-    if backend != "auto":
-        return backend
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
-        return "azure_openai"
-    if os.environ.get("OPENAI_API_KEY"):
-        return "openai"
-    if os.environ.get("DATABRICKS_HOST") and os.environ.get("DATABRICKS_TOKEN"):
-        return "databricks"
-    return "none"
-
-
-def _call_anthropic(messages: list[dict]) -> str:
     try:
-        import anthropic
-    except ImportError:
-        return _fallback_summary("", [])
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2048,
-        system=SYSTEM_PROMPT,
-        messages=messages,
-    )
-    return response.content[0].text
+        return call_llm(messages, system=SYSTEM_PROMPT, backend=backend, max_tokens=2048)
+    except Exception as exc:
+        return f"LLM call failed ({backend}): {exc}\n\n" + _fallback_summary(question, retrieved_nodes)
 
 
-def _call_openai(messages: list[dict], azure: bool = False) -> str:
-    try:
-        if azure:
-            from openai import AzureOpenAI
-            client = AzureOpenAI(
-                api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-                azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
-                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01"),
-            )
-            model = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
-        else:
-            from openai import OpenAI
-            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            model = "gpt-4o"
-        all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-        resp = client.chat.completions.create(model=model, messages=all_messages, max_tokens=2048)
-        return resp.choices[0].message.content or ""
-    except Exception as e:
-        return f"Error calling OpenAI: {e}"
-
-
-def _call_databricks(messages: list[dict]) -> str:
-    try:
-        from databricks.sdk import WorkspaceClient  # type: ignore[import-untyped]
-        w = WorkspaceClient()
-        endpoint = os.environ.get("DATABRICKS_SERVING_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
-        resp = w.serving_endpoints.query(
-            name=endpoint,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        )
-        return resp.choices[0].message.content or ""
-    except Exception as e:
-        return f"Error calling Databricks endpoint: {e}"
 
 
 def _fallback_summary(question: str, nodes: list[dict]) -> str:

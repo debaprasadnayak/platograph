@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from datagraph.graph import DataGraph
 
+from datagraph.llm_backend import call_llm, detect_backend
 from datagraph.models import DataLayer, Edge, EdgeType, Node, NodeType
 
 log = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def enrich_docs_with_llm(
     if not doc_nodes:
         return 0
 
-    resolved = _detect_backend(backend)
+    resolved = detect_backend(backend)
     if resolved == "none":
         log.warning("No LLM backend available — skipping doc enrichment. "
                     "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or DATABRICKS_HOST+TOKEN.")
@@ -159,58 +159,7 @@ def _enrich_one(doc_node: Node, backend: str) -> tuple[list[Node], list[Edge]]:
 
 def _call_llm(text: str, backend: str) -> str:
     messages = [{"role": "user", "content": f"Document text:\n{text}"}]
-    if backend == "anthropic":
-        return _call_anthropic(messages)
-    if backend in ("openai", "azure_openai"):
-        return _call_openai(messages, azure=backend == "azure_openai")
-    if backend == "databricks":
-        return _call_databricks(messages)
-    return '{"nodes": [], "edges": []}'
-
-
-def _call_anthropic(messages: list[dict]) -> str:
-    import anthropic  # type: ignore[import-untyped]
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        system=_EXTRACT_PROMPT,
-        messages=messages,
-    )
-    return response.content[0].text
-
-
-def _call_openai(messages: list[dict], *, azure: bool = False) -> str:
-    if azure:
-        from openai import AzureOpenAI  # type: ignore[import-untyped]
-        client: Any = AzureOpenAI(
-            api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-            api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01"),
-            azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
-        )
-        model = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
-    else:
-        from openai import OpenAI  # type: ignore[import-untyped]
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        model = os.environ.get("OPENAI_MODEL", "gpt-4o")
-
-    response = client.chat.completions.create(
-        model=model,
-        max_tokens=1024,
-        messages=[{"role": "system", "content": _EXTRACT_PROMPT}] + messages,
-    )
-    return response.choices[0].message.content or ""
-
-
-def _call_databricks(messages: list[dict]) -> str:
-    from databricks.sdk import WorkspaceClient  # type: ignore[import-untyped]
-    w = WorkspaceClient()
-    endpoint = os.environ.get("DATABRICKS_LLM_ENDPOINT", "databricks-claude-sonnet-4")
-    response = w.serving_endpoints.query(
-        name=endpoint,
-        messages=[{"role": "system", "content": _EXTRACT_PROMPT}] + messages,
-    )
-    return response.choices[0].message.content or ""
+    return call_llm(messages, system=_EXTRACT_PROMPT, backend=backend, max_tokens=1024)
 
 
 # ---------------------------------------------------------------------------
@@ -281,19 +230,4 @@ def _parse_response(raw: str) -> tuple[list[Node], list[Edge]]:
     return nodes, edges
 
 
-# ---------------------------------------------------------------------------
-# Backend detection (mirrors synthesizer.py)
-# ---------------------------------------------------------------------------
-
-def _detect_backend(backend: str) -> str:
-    if backend != "auto":
-        return backend
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
-        return "azure_openai"
-    if os.environ.get("OPENAI_API_KEY"):
-        return "openai"
-    if os.environ.get("DATABRICKS_HOST") and os.environ.get("DATABRICKS_TOKEN"):
-        return "databricks"
-    return "none"
+# detect_backend imported from datagraph.llm_backend
