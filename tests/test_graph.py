@@ -21,8 +21,11 @@ def _make_graph() -> DataGraph:
     g.add_node(_node("raw.orders", "orders", NodeType.TABLE, DataLayer.RAW))
     g.add_node(_node("silver.orders", "silver_orders", NodeType.TABLE, DataLayer.SILVER))
     g.add_node(_node("gold.orders_summary", "orders_summary", NodeType.TABLE, DataLayer.GOLD))
-    g.add_edge(Edge(source_id="raw.orders", target_id="silver.orders", type=EdgeType.READS_FROM))
-    g.add_edge(Edge(source_id="silver.orders", target_id="gold.orders_summary", type=EdgeType.READS_FROM))
+    # READS_FROM convention: Edge(consumer, source) — consumer has edge pointing to its source.
+    # silver reads from raw → silver → raw
+    # gold reads from silver → gold → silver
+    g.add_edge(Edge(source_id="silver.orders", target_id="raw.orders", type=EdgeType.READS_FROM))
+    g.add_edge(Edge(source_id="gold.orders_summary", target_id="silver.orders", type=EdgeType.READS_FROM))
     return g
 
 
@@ -36,10 +39,10 @@ def test_add_node_merge():
 
 def test_dedup_edges():
     g = _make_graph()
-    g.add_edge(Edge(source_id="raw.orders", target_id="silver.orders", type=EdgeType.READS_FROM))
+    g.add_edge(Edge(source_id="silver.orders", target_id="raw.orders", type=EdgeType.READS_FROM))
     edge_count = sum(
         1 for e in g._edges
-        if e.source_id == "raw.orders" and e.target_id == "silver.orders"
+        if e.source_id == "silver.orders" and e.target_id == "raw.orders"
     )
     assert edge_count == 1
 

@@ -32,6 +32,7 @@ dependencies = [
     "tenacity>=8.2",
     "tiktoken>=0.7",
     "anthropic>=0.34",
+    "openai>=1.30",
     "mcp>=1.0",
 ]
 

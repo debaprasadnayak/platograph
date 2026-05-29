@@ -271,23 +271,35 @@ class DataGraph:
     # ------------------------------------------------------------------
 
     def upstream(self, node_id: str, depth: int = 10) -> list[Node]:
-        return [
-            self._nodes[n]
-            for n in nx.ancestors(self._g, node_id)
-            if n in self._nodes
-        ]
+        """Return nodes that are upstream data sources of *node_id*.
 
-    def downstream(self, node_id: str, depth: int = 10) -> list[Node]:
+        READS_FROM edges are stored as consumer → source (e.g. gold → silver),
+        so upstream sources are reachable via ``nx.descendants``.
+        """
         return [
             self._nodes[n]
             for n in nx.descendants(self._g, node_id)
             if n in self._nodes
         ]
 
+    def downstream(self, node_id: str, depth: int = 10) -> list[Node]:
+        """Return nodes that consume *node_id* (downstream consumers).
+
+        Consumers have edges pointing TO *node_id* via READS_FROM, so they
+        appear as ``nx.ancestors`` of this node.
+        """
+        return [
+            self._nodes[n]
+            for n in nx.ancestors(self._g, node_id)
+            if n in self._nodes
+        ]
+
     def impact_analysis(self, node_id: str) -> dict[str, Any]:
         node = self._nodes.get(node_id)
-        direct = [self._nodes[n] for n in self._g.successors(node_id) if n in self._nodes]
-        all_down = [self._nodes[n] for n in nx.descendants(self._g, node_id) if n in self._nodes]
+        # Direct consumers: nodes whose edge points TO node_id (predecessors)
+        direct = [self._nodes[n] for n in self._g.predecessors(node_id) if n in self._nodes]
+        # All transitive consumers
+        all_down = [self._nodes[n] for n in nx.ancestors(self._g, node_id) if n in self._nodes]
         return {
             "node": node,
             "directly_affected": direct,
