@@ -1,17 +1,38 @@
 """Shared LLM backend detection and invocation for platograph.
 
 Auto-discovers available LLM providers in this priority order:
-  1. Anthropic  — ANTHROPIC_API_KEY env var (also set by Claude Code CLI)
-  2. Azure OpenAI — AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT
-  3. OpenAI      — OPENAI_API_KEY env var (also used by Codex CLI)
-  4. GitHub      — GITHUB_TOKEN / GH_TOKEN / gh CLI / Copilot config file
-                   → calls GitHub Models API (OpenAI-compatible endpoint)
-                   Works automatically in GitHub Codespaces, GitHub Actions,
-                   and any machine where `gh auth login` has been run.
-  5. Databricks  — DATABRICKS_HOST + DATABRICKS_TOKEN
-  6. "none"      — no LLM available; callers should fall back gracefully
+  1. anthropic       — ANTHROPIC_API_KEY env var
+  2. azure_openai    — AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT
+  3. openai          — OPENAI_API_KEY env var
+  4. github          — GITHUB_TOKEN / GH_TOKEN / gh CLI token
+                       → tries GitHub Copilot API first (api.githubcopilot.com),
+                         then falls back to GitHub Models (models.inference.ai.azure.com)
+  5. databricks      — DATABRICKS_HOST + DATABRICKS_TOKEN
+  6. ollama          — Ollama running locally at localhost:11434 (no key required)
+  7. claude-code     — `claude` CLI installed (explicit opt-in recommended)
+  8. "none"          — no LLM available; callers fall back gracefully
 
 No configuration required — just have any one of these set up.
+
+CLI usage:
+  # Use GitHub Copilot session (recommended when gh CLI is authenticated):
+  platograph query "..." --backend github-copilot
+
+  # Pass a key inline without exporting env vars:
+  platograph query "..." --backend anthropic --api-key sk-ant-...
+  platograph query "..." --backend openai    --api-key sk-...
+  platograph query "..." --backend github    --api-key ghp_...
+
+  # Use local Ollama (no internet needed):
+  platograph scan . --enrich-llm --backend ollama
+
+Explicit key mapping (--api-key sets the corresponding env var):
+  anthropic / claude-code  → ANTHROPIC_API_KEY
+  openai                   → OPENAI_API_KEY
+  azure_openai             → AZURE_OPENAI_API_KEY
+  github / github-copilot  → GITHUB_TOKEN
+  databricks               → DATABRICKS_TOKEN
+  ollama                   → (no key; set OLLAMA_HOST / OLLAMA_MODEL instead)
 """
 
 from __future__ import annotations
@@ -24,6 +45,48 @@ from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+# Choices exposed to the CLI for --backend option
+BACKEND_CHOICES = [
+    "auto",
+    "anthropic",
+    "github-copilot",   # GitHub Copilot Chat API (api.githubcopilot.com)
+    "github",           # GitHub Models with Copilot fallback
+    "azure_openai",
+    "openai",
+    "databricks",
+    "ollama",
+    "claude-code",      # claude CLI (explicit opt-in)
+]
+
+# Maps backend name → environment variable set by --api-key
+_BACKEND_KEY_ENV: dict[str, str] = {
+    "anthropic":      "ANTHROPIC_API_KEY",
+    "claude-code":    "ANTHROPIC_API_KEY",
+    "openai":         "OPENAI_API_KEY",
+    "azure_openai":   "AZURE_OPENAI_API_KEY",
+    "github":         "GITHUB_TOKEN",
+    "github-copilot": "GITHUB_TOKEN",
+    "databricks":     "DATABRICKS_TOKEN",
+}
+
+
+# ---------------------------------------------------------------------------
+# Key injection helper (for --api-key CLI flag)
+# ---------------------------------------------------------------------------
+
+def apply_api_key(backend: str, api_key: str) -> None:
+    """Set the appropriate environment variable for *backend* to *api_key*.
+
+    Allows passing ``--api-key`` from the CLI without exporting env vars manually.
+    Must be called before ``detect_backend()`` / ``call_llm()``.
+    """
+    env_var = _BACKEND_KEY_ENV.get(backend)
+    if env_var:
+        os.environ[env_var] = api_key
+        log.debug("Set %s from --api-key for backend %s", env_var, backend)
+    elif backend not in ("ollama", "auto", "none"):
+        log.warning("--api-key provided for unknown backend %r — ignoring", backend)
 
 
 # ---------------------------------------------------------------------------
@@ -49,12 +112,43 @@ def detect_backend(preferred: str = "auto") -> str:
         return "openai"
 
     if find_github_token():
+        # "github" backend always tries Copilot first, falls back to Models
         return "github"
 
     if os.environ.get("DATABRICKS_HOST") and os.environ.get("DATABRICKS_TOKEN"):
         return "databricks"
 
+    if _is_ollama_running():
+        return "ollama"
+
+    # claude-code: last resort in auto-detection; prefer --backend claude-code explicitly
+    if _is_claude_code_available():
+        return "claude-code"
+
     return "none"
+
+
+def _is_claude_code_available() -> bool:
+    """Return True if the `claude` CLI is installed and responds."""
+    try:
+        r = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _is_ollama_running() -> bool:
+    """Return True if Ollama is reachable at OLLAMA_HOST (default localhost:11434)."""
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    try:
+        import httpx
+        r = httpx.get(f"{host}/api/version", timeout=2)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -145,14 +239,26 @@ def call_llm(
     """
     if backend == "anthropic":
         return _call_anthropic(messages, system, max_tokens)
+    if backend == "claude-code":
+        return _call_claude_code(messages, system, max_tokens)
     if backend == "azure_openai":
         return _call_openai(messages, system, max_tokens, azure=True)
     if backend == "openai":
         return _call_openai(messages, system, max_tokens, azure=False)
+    if backend == "github-copilot":
+        # Explicit Copilot-only path — no Models fallback
+        result = _find_github_token_with_source()
+        if not result:
+            raise RuntimeError("github-copilot backend selected but no GitHub token found. "
+                               "Run: gh auth login")
+        token, _ = result
+        return _call_github_copilot(token, messages, system, max_tokens)
     if backend == "github":
         return _call_github(messages, system, max_tokens)
     if backend == "databricks":
         return _call_databricks(messages, system, max_tokens)
+    if backend == "ollama":
+        return _call_ollama(messages, system, max_tokens)
     return ""
 
 
@@ -201,34 +307,43 @@ def _call_openai(
 
 
 def _call_github(messages: list[dict], system: str, max_tokens: int) -> str:
-    """Call GitHub Models API or GitHub Copilot API depending on the token source.
+    """Call GitHub Copilot API first; fall back to GitHub Models on failure.
 
-    - Tokens from env vars / gh CLI     → GitHub Models  (models.inference.ai.azure.com)
-    - Tokens from Copilot hosts.json    → Copilot Chat API (api.githubcopilot.com)
-      The Copilot OAuth token is exchanged for a short-lived session token first.
+    Any GitHub OAuth token (from env, gh CLI, or Copilot hosts.json) can be
+    exchanged for a short-lived Copilot session token at api.github.com.
+    This path uses api.githubcopilot.com which is NOT affected by corporate
+    TLS inspection of *.azure.com endpoints.
     """
     result = _find_github_token_with_source()
     if not result:
-        raise RuntimeError("GitHub backend selected but no token found")
-    token, source = result
+        raise RuntimeError("GitHub backend selected but no token found. "
+                           "Run: gh auth login")
+    token, _source = result
 
-    if source == "copilot":
-        # Copilot OAuth token: exchange for session token, then call Copilot API
-        try:
-            return _call_github_copilot(token, messages, system, max_tokens)
-        except Exception as exc:
-            log.debug("Copilot API failed (%s), trying GitHub Models", exc)
-            # Fall through to GitHub Models as last resort
+    # Always try Copilot Chat API first (works for any gho_* OAuth token)
+    try:
+        return _call_github_copilot(token, messages, system, max_tokens)
+    except Exception as copilot_exc:
+        log.debug("Copilot API failed (%s), falling back to GitHub Models", copilot_exc)
 
-    # Standard GitHub token (env / gh CLI / fallback) → GitHub Models
+    # Fallback: GitHub Models API (may be blocked on corporate networks)
     return _call_github_models(token, messages, system, max_tokens)
 
 
 def _call_github_copilot(oauth_token: str, messages: list[dict], system: str, max_tokens: int) -> str:
-    """Exchange a Copilot OAuth token for a session token then call the Copilot chat API."""
+    """Exchange an OAuth token for a Copilot session token, then call api.githubcopilot.com.
+
+    Uses urllib for the token exchange (api.github.com is not affected by corporate
+    TLS inspection). The subsequent chat call uses httpx with the same SSL-aware
+    context as _call_github_models to handle corporate CA bundles.
+    """
+    import ssl
     import urllib.request
+    import httpx
+    from openai import OpenAI  # type: ignore[import-untyped]
 
     # Step 1: exchange OAuth token for short-lived Copilot session token
+    # api.github.com is reachable even on corporate networks (verified)
     req = urllib.request.Request(
         "https://api.github.com/copilot_internal/v2/token",
         headers={
@@ -238,15 +353,42 @@ def _call_github_copilot(oauth_token: str, messages: list[dict], system: str, ma
             "Editor-Version": "platograph/1.0",
         },
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
-        session_data: dict[str, Any] = json.loads(resp.read())
-    session_token: str = session_data["token"]
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+            session_data: dict[str, Any] = json.loads(resp.read())
+    except Exception as exc:
+        raise RuntimeError(
+            f"Copilot session token exchange failed: {exc}. "
+            "Ensure you have an active GitHub Copilot subscription and your "
+            "token has the required scopes (gh auth login --scopes copilot)."
+        ) from exc
 
-    # Step 2: call Copilot chat API (OpenAI-compatible)
-    from openai import OpenAI  # type: ignore[import-untyped]
+    session_token: str = session_data.get("token", "")
+    if not session_token:
+        raise RuntimeError(
+            "Copilot session token exchange returned no token. "
+            f"Response keys: {list(session_data.keys())}"
+        )
+
+    # Step 2: call Copilot chat API (OpenAI-compatible) at api.githubcopilot.com
+    # This domain is NOT affected by corporate *.azure.com TLS inspection.
+    # Still apply the same SSL context for consistency with other HTTPS calls.
+    ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+    ssl_ctx: ssl.SSLContext | bool = True
+    if ca_bundle:
+        ssl_ctx = ssl.create_default_context(cafile=ca_bundle)
+    else:
+        try:
+            import certifi  # type: ignore[import-untyped]
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            pass
+
+    http_client = httpx.Client(verify=ssl_ctx)
     client = OpenAI(
         base_url="https://api.githubcopilot.com",
         api_key=session_token,
+        http_client=http_client,
         default_headers={
             "Editor-Version": "platograph/1.0",
             "Editor-Plugin-Version": "platograph/1.0",
@@ -308,6 +450,79 @@ def _call_github_models(token: str, messages: list[dict], system: str, max_token
                 ) from exc
             cause = cause.__cause__ or cause.__context__
         raise
+
+
+def _call_claude_code(messages: list[dict], system: str, max_tokens: int) -> str:
+    """Call the `claude` CLI in non-interactive print mode.
+
+    Uses Claude Code's own stored authentication — no ANTHROPIC_API_KEY needed.
+    Requires the Claude Code CLI to be installed: https://claude.ai/code
+
+    Model is selected via CLAUDE_CODE_MODEL env var (default: claude-sonnet-4-5).
+    Falls back to the anthropic SDK when ANTHROPIC_API_KEY is set.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return _call_anthropic(messages, system, max_tokens)
+
+    model = os.environ.get("CLAUDE_CODE_MODEL", "claude-sonnet-4-5")
+
+    # Build a single prompt string (system + conversation turns)
+    prompt_parts = [f"<system>\n{system}\n</system>"]
+    for msg in messages:
+        role = msg["role"].capitalize()
+        prompt_parts.append(f"{role}: {msg['content']}")
+    full_prompt = "\n\n".join(prompt_parts)
+
+    cmd = ["claude", "-p", full_prompt, "--model", model]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("claude CLI timed out after 120 s") from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "claude CLI not found. Install Claude Code from https://claude.ai/code"
+        ) from exc
+
+    if result.returncode != 0:
+        err = result.stderr.strip()[:300]
+        raise RuntimeError(f"claude CLI exited with code {result.returncode}: {err}")
+
+    return result.stdout.strip()
+
+
+def _call_ollama(messages: list[dict], system: str, max_tokens: int) -> str:
+    """Call a locally running Ollama instance (no API key required).
+
+    Configure via environment variables:
+      OLLAMA_HOST   — base URL (default: http://localhost:11434)
+      OLLAMA_MODEL  — model name (default: llama3.2)
+    """
+    import httpx  # already available as transitive dep of openai
+
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    model = os.environ.get("OLLAMA_MODEL", "llama3.2")
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}] + messages,
+        "stream": False,
+        "options": {"num_predict": max_tokens},
+    }
+    try:
+        resp = httpx.post(f"{host}/api/chat", json=payload, timeout=120)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Ollama request failed ({host}). "
+            "Is Ollama running? Start it with: ollama serve"
+        ) from exc
+
+    return resp.json()["message"]["content"]
 
 
 def _call_databricks(messages: list[dict], system: str, max_tokens: int) -> str:

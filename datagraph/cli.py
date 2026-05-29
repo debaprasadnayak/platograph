@@ -23,6 +23,20 @@ def main() -> None:
 @click.option("--no-viz", is_flag=True, help="Skip HTML visualisation.")
 @click.option("--no-report", is_flag=True, help="Skip LINEAGE_REPORT.md.")
 @click.option("--enrich-llm", is_flag=True, help="Enrich descriptions using LLM.")
+@click.option(
+    "--backend", default="auto", show_default=True,
+    type=click.Choice(
+        ["auto", "anthropic", "claude-code", "azure_openai", "openai",
+         "github-copilot", "github", "databricks", "ollama"],
+        case_sensitive=False,
+    ),
+    help="LLM backend for --enrich-llm. Use \'github-copilot\' for zero-config Copilot Chat.",
+)
+@click.option(
+    "--api-key", default=None,
+    metavar="KEY",
+    help="Inline API key for --backend (avoids setting env vars). Not needed for claude-code or ollama.",
+)
 @click.option("--live-uc", is_flag=True, help="Fetch live Unity Catalog metadata.")
 @click.option("--live-jobs", is_flag=True, help="Fetch live Databricks Jobs.")
 @click.option("--update", is_flag=True, help="Merge into existing graph.json.")
@@ -33,6 +47,8 @@ def scan(
     no_viz: bool,
     no_report: bool,
     enrich_llm: bool,
+    backend: str,
+    api_key: str | None,
     live_uc: bool,
     live_jobs: bool,
     update: bool,
@@ -140,8 +156,11 @@ def scan(
     if enrich_llm:
         try:
             from datagraph.enrichment.doc_enrichment import enrich_docs_with_llm
+            from datagraph.llm_backend import apply_api_key
+            if api_key:
+                apply_api_key(backend, api_key)
             _print("  Running LLM document enrichment …")
-            n_enriched = enrich_docs_with_llm(graph)
+            n_enriched = enrich_docs_with_llm(graph, backend=backend)
             _print(f"  [green]✓[/green] Doc enrichment: {n_enriched} document(s) enriched")
         except Exception as exc:
             _print(f"  [yellow]Doc enrichment skipped:[/yellow] {exc}")
@@ -189,15 +208,56 @@ def scan(
 @main.command()
 @click.argument("question")
 @click.option("--graph-json", default="datagraph-out/graph.json", show_default=True)
-def query(question: str, graph_json: str) -> None:
-    """Answer a natural-language question about the graph."""
+@click.option(
+    "--backend", default="auto", show_default=True,
+    type=click.Choice(
+        ["auto", "anthropic", "claude-code", "azure_openai", "openai",
+         "github-copilot", "github", "databricks", "ollama"],
+        case_sensitive=False,
+    ),
+    help=(
+        "LLM backend to use. \'auto\' auto-detects from env/installed tools. "
+        "Use \'github-copilot\' to call via GitHub Copilot Chat (no extra API key needed "
+        "if \'gh auth login\' has been run). "
+        "Use \'ollama\' for a local model. "
+        "Pass any other backend with --api-key to supply the key inline."
+    ),
+)
+@click.option(
+    "--api-key", default=None,
+    metavar="KEY",
+    help=(
+        "API key for the selected --backend. Sets the appropriate env var "
+        "(e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, GITHUB_TOKEN). "
+        "Not needed for \'github-copilot\', \'claude-code\', or \'ollama\'."
+    ),
+)
+def query(question: str, graph_json: str, backend: str, api_key: str | None) -> None:
+    """Answer a natural-language question about the graph.
+
+    Examples:
+
+      # GitHub Copilot Chat (no API key — uses gh CLI auth):
+      platograph query "what writes to gold?" --backend github-copilot
+
+      # Pass a key inline without exporting env vars:
+      platograph query "what writes to gold?" --backend anthropic --api-key sk-ant-...
+      platograph query "what writes to gold?" --backend openai    --api-key sk-...
+
+      # Use local Ollama (no key, no internet):
+      platograph query "what writes to gold?" --backend ollama
+    """
     from datagraph.graph import DataGraph
     from datagraph.rag.retriever import retrieve
     from datagraph.rag.synthesizer import synthesize
+    from datagraph.llm_backend import apply_api_key
+
+    if api_key:
+        apply_api_key(backend, api_key)
 
     g = DataGraph.load(Path(graph_json))
     nodes = retrieve(g, question, top_k=12)
-    answer = synthesize(question, nodes)
+    answer = synthesize(question, nodes, backend=backend)
     click.echo(answer)
 
 
@@ -307,9 +367,23 @@ This project uses **Platograph** to maintain a data-platform knowledge graph.
 # Scan / refresh the graph
 platograph scan .
 
-# Answer questions
+# Answer questions (LLM auto-detected)
 platograph query "what jobs write to the gold layer?"
 platograph query "show me all assets with no downstream consumers"
+
+# Use a specific LLM session — no API key needed:
+platograph query "what writes to gold?" --backend claude-code   # Claude Code session
+platograph query "what writes to gold?" --backend ollama        # local Ollama model
+
+# Pass a key inline (no env var export needed):
+platograph query "..." --backend anthropic --api-key sk-ant-...
+platograph query "..." --backend openai    --api-key sk-...
+platograph query "..." --backend github    --api-key ghp_...
+
+# Enrich doc nodes with LLM-extracted entities
+platograph scan . --enrich-llm
+platograph scan . --enrich-llm --backend claude-code
+platograph scan . --enrich-llm --backend ollama
 
 # Lineage
 platograph upstream <node_id>
@@ -323,6 +397,16 @@ platograph impact <node_id>
 platograph schedule <asset_name>
 platograph execution <job_name>
 ```
+
+## LLM Backend Priority (auto-detection)
+
+1. `anthropic`   — ANTHROPIC_API_KEY set
+2. `claude-code` — `claude` CLI installed (Claude Code desktop app, no key needed)
+3. `azure_openai` — AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT set
+4. `openai`      — OPENAI_API_KEY set
+5. `github`      — gh CLI authenticated / GITHUB_TOKEN set
+6. `databricks`  — DATABRICKS_HOST + DATABRICKS_TOKEN set
+7. `ollama`      — Ollama running at localhost:11434 (no key, local model)
 
 ## Graph files
 

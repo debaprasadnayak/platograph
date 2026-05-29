@@ -59,27 +59,68 @@ platograph prs <owner/repo>           # open PRs + graph blast radius
 ## MCP Server (AI assistant integration)
 
 ```bash
-platograph serve   # exposes 9 tools to Claude, Copilot, Cursor, etc.
+platograph serve   # exposes 12 tools to Claude, Copilot, Cursor, etc.
 ```
 
-Tools exposed: `query_graph`, `get_node`, `get_neighbors`, `shortest_path`, `impact_analysis`, `schedule_for`, `execution_order`, `list_prs`, `pr_impact`
+**No API key needed** — LLM-powered features (query, doc enrichment) return
+context to the calling AI assistant, which uses its own intelligence to generate
+answers. Users with API keys can still run `platograph query` directly in the
+terminal.
+
+### Tools exposed
+
+| Tool | LLM needed? | Purpose |
+|------|-------------|---------|
+| `query_graph` | No* | Retrieve graph context for a question; the calling AI answers |
+| `enrich_document` | No* | Return doc text + extraction instructions; the AI extracts entities |
+| `apply_enrichment` | No | Apply AI-extracted entities/edges to the graph |
+| `list_docs_for_enrichment` | No | List documents available for enrichment |
+| `get_node` | No | Fetch node metadata by ID/name |
+| `get_neighbors` | No | Upstream/downstream neighbours |
+| `shortest_path` | No | Path between two nodes |
+| `impact_analysis` | No | Blast-radius analysis |
+| `schedule_for` | No | What orchestrator runs an asset |
+| `execution_order` | No | Topological task order |
+| `list_prs` | No | Open PRs + blast-radius |
+| `pr_impact` | No | PR-specific impact |
+
+*\*The MCP tool returns context — the calling AI (Copilot/Claude) provides the intelligence.*
+
+### MCP config (VS Code / Claude Desktop / Cursor)
+
+```json
+{
+  "mcpServers": {
+    "platograph": {
+      "command": "platograph",
+      "args": ["serve", "--graph-json", "path/to/datagraph-out/graph.json"]
+    }
+  }
+}
+```
 
 ## GraphRAG
 
-Platograph supports LLM-backed Q&A over the graph. Configure one of:
+Platograph supports LLM-backed Q&A over the graph. Two modes:
+
+### Mode 1: Via MCP (no API key — recommended)
+
+Add platograph as an MCP server (see above). Your AI assistant (GitHub Copilot,
+Claude Code, Cursor) calls `query_graph` and answers using its own LLM.
+
+### Mode 2: Direct CLI (requires API key)
 
 ```bash
-# Anthropic (default if ANTHROPIC_API_KEY set)
+# Use GitHub Copilot session (no extra key if gh CLI authenticated):
+platograph query "what writes to gold?" --backend github-copilot
+
+# Or configure one of:
 export ANTHROPIC_API_KEY=sk-ant-...
-
-# OpenAI
 export OPENAI_API_KEY=sk-...
-
-# Azure OpenAI
 export AZURE_OPENAI_API_KEY=... AZURE_OPENAI_ENDPOINT=https://...
-
-# Databricks Model Serving
 export DATABRICKS_HOST=https://... DATABRICKS_TOKEN=dapi...
+
+platograph query "what writes to the gold layer?"
 ```
 
 ## Databricks App Viewer
