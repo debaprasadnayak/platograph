@@ -1,0 +1,38 @@
+{
+  "name": "SampleCopyPipeline",
+  "properties": {
+    "activities": [
+      {
+        "name": "CopyRawOrders",
+        "type": "Copy",
+        "inputs": [
+          {"referenceName": "SourceOrders", "type": "DatasetReference"}
+        ],
+        "outputs": [
+          {"referenceName": "BronzeOrders", "type": "DatasetReference"}
+        ],
+        "dependsOn": []
+      },
+      {
+        "name": "RunNotebook",
+        "type": "DatabricksNotebook",
+        "typeProperties": {
+          "notebookPath": "/Workspace/notebooks/transform_orders"
+        },
+        "dependsOn": [
+          {"activity": "CopyRawOrders", "dependencyConditions": ["Succeeded"]}
+        ]
+      },
+      {
+        "name": "TriggerReport",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {"referenceName": "ReportPipeline"}
+        },
+        "dependsOn": [
+          {"activity": "RunNotebook", "dependencyConditions": ["Succeeded"]}
+        ]
+      }
+    ]
+  }
+}

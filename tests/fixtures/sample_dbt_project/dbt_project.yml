@@ -1,0 +1,10 @@
+name: "sample_project"
+version: "1.0.0"
+profile: default
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+source-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]

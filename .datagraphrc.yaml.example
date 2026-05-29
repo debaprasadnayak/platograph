@@ -1,0 +1,65 @@
+project_name: my_data_platform
+sql_dialect: databricks  # databricks | spark | tsql | ansi
+
+layer_paths:
+  source:    ["sources", "raw", "landing"]
+  bronze:    ["bronze", "ingestion", "staging_raw"]
+  silver:    ["silver", "staging", "intermediate"]
+  gold:      ["gold", "marts", "aggregates"]
+  datamart:  ["datamart", "dm_", "wide_"]
+  reporting: ["reporting", "powerbi", "bi", "semantic_model"]
+
+extractors:
+  dbt: true
+  sql: true
+  notebooks: true
+  lakeflow: true
+  unity_catalog: true
+  fabric_notebooks: true
+  fabric_lakehouse: true
+  fabric_warehouse: true
+  fabric_pipelines: true
+  fabric_spark_jobs: true
+  fabric_semantic_model: true
+  onelake_shortcuts: true
+  power_bi: true
+  python: true
+  markdown: true
+  databricks_jobs: true
+  airflow: true
+  adf: true
+  synapse: true
+  dbt_cloud: true
+  github_actions: false   # disabled by default (noisy)
+  fabric_deployment_pipelines: true
+
+scan_paths: ["."]
+ignore_paths:
+  - "node_modules"
+  - ".venv"
+  - "target"
+  - "dbt_packages"
+  - ".git"
+  - "__pycache__"
+
+output_dir: datagraph-out
+max_viz_nodes: 300
+max_mermaid_nodes: 50
+
+databricks_path_prefixes_to_strip:
+  - "/Workspace"
+  - "/Repos"
+  - "/Users"
+
+airflow_operator_aliases: {}
+  # MyCompanyDatabricksOperator: DatabricksRunNowOperator
+
+llm_enrichment:
+  enabled: false
+  model: claude-sonnet-4-20250514
+  enrich_types: ["doc_file", "notebook", "airflow_dag"]
+
+rag:
+  backend: auto   # auto | anthropic | openai | databricks | azure_openai | ollama
+  top_k: 10
+  hop_depth: 2

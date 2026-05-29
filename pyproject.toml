@@ -1,0 +1,95 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "platograph"
+version = "0.1.0"
+description = "Data-platform knowledge graph scanner: turn Databricks / Fabric projects into a queryable lineage + orchestration graph"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "debaprasadnayak" }]
+keywords = ["databricks", "fabric", "knowledge-graph", "lineage", "data-engineering"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "networkx>=3.2",
+    "sqlglot>=25.0",
+    "pyyaml>=6.0",
+    "nbformat>=5.9",
+    "python-louvain>=0.16",
+    "pyvis>=0.3.2",
+    "click>=8.1",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "rich>=13.0",
+    "structlog>=24.0",
+    "tenacity>=8.2",
+    "tiktoken>=0.7",
+    "anthropic>=0.34",
+]
+
+[project.optional-dependencies]
+databricks = ["databricks-sdk>=0.20"]
+fabric = ["msal>=1.28", "requests>=2.31"]
+rag-databricks = ["databricks-sdk>=0.20"]
+rag-azure = ["openai>=1.30"]
+openai = ["openai>=1.30"]
+mcp = ["mcp>=1.0"]
+app = ["fastapi>=0.111", "uvicorn>=0.30"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "bandit[toml]>=1.7",
+    "pre-commit>=3.7",
+    "types-PyYAML",
+    "types-requests",
+]
+all = [
+    "databricks-sdk>=0.20",
+    "msal>=1.28",
+    "requests>=2.31",
+    "openai>=1.30",
+    "mcp>=1.0",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+platograph = "datagraph.cli:main"
+datagraph = "datagraph.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["datagraph"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S", "C4", "RUF"]
+ignore = ["S101", "S603", "S607"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=datagraph --cov-report=term-missing --cov-fail-under=30"
+
+[tool.coverage.run]
+source = ["datagraph"]
+omit = ["tests/*"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]

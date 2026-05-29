@@ -1,0 +1,26 @@
+bundle:
+  name: sample_bundle
+
+resources:
+  jobs:
+    my_etl_job:
+      name: "My ETL Job"
+      schedule:
+        quartz_cron_expression: "0 0 8 * * ?"
+        timezone_id: "UTC"
+      tasks:
+        - task_key: ingest_notebook
+          notebook_task:
+            notebook_path: /Workspace/notebooks/ingest
+        - task_key: run_dbt
+          dbt_task:
+            project_directory: .
+            commands:
+              - dbt run --select stg_orders orders_mart
+          depends_on:
+            - task_key: ingest_notebook
+        - task_key: run_pipeline
+          pipeline_task:
+            pipeline_id: my_dlt_pipeline
+          depends_on:
+            - task_key: run_dbt
